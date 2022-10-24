@@ -323,6 +323,7 @@ static void pci_crypto_memio_write(void *opaque,
 	case offsetof(CryptoDeviceIo, $field): \
 		ASSERT(size == sizeof(dev->io->$field));
 
+	printf("Write to ==>IO offset 0x%lx size %d, value = 0x%lx\n", addr, size, val);
 	switch (addr)
 	{
 	CASE(ErrorCode)
@@ -339,6 +340,7 @@ static void pci_crypto_memio_write(void *opaque,
 			case CryptoDevice_AesCbcEncryptoCommand:
 			case CryptoDevice_AesCbcDecryptoCommand:
 			case CryptoDevice_Sha2Command:
+				printf("Do command 0%x\n", dev->io->Command);
 				qemu_cond_signal(&dev->thread_cond);
 				break;
 			default:
