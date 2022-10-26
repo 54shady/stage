@@ -46,6 +46,7 @@ typedef struct DmaRequest
 	DmaBuf out;
 } DmaRequest;
 
+/* mmio 地址 */
 typedef struct tagCryptoDeviceIo
 {
 	uint8_t ErrorCode;
@@ -327,12 +328,15 @@ static void pci_crypto_memio_write(void *opaque,
 	switch (addr)
 	{
 	CASE(ErrorCode)
+		printf("ErrorCode raise WriteIoError\n");
 		raise_error_int(dev, CryptoDevice_WriteIoError);
 		break;
 	CASE(State)
+		printf("State raise WriteIoError\n");
 		raise_error_int(dev, CryptoDevice_WriteIoError);
 		break;
 	CASE(Command)
+		printf("Command val = 0x%lx\n", val);
 		dev->io->Command = (uint8_t)val;
 		switch (dev->io->Command)
 		{
@@ -340,7 +344,7 @@ static void pci_crypto_memio_write(void *opaque,
 			case CryptoDevice_AesCbcEncryptoCommand:
 			case CryptoDevice_AesCbcDecryptoCommand:
 			case CryptoDevice_Sha2Command:
-				printf("Do command 0%x\n", dev->io->Command);
+				printf("Do command 0x%x\n", dev->io->Command);
 				qemu_cond_signal(&dev->thread_cond);
 				break;
 			default:
@@ -414,6 +418,7 @@ static const MemoryRegionOps pci_crypto_memio_ops = {
 
 static void DoReset(PCICryptoState *dev)
 {
+	printf("%s, %d\n", __FUNCTION__, __LINE__);
 	dev->io->ErrorCode = CryptoDevice_NoError;
 	dev->io->State = CryptoDevice_ReadyState;
 	dev->io->Command = CryptoDevice_IdleCommand;
@@ -448,7 +453,10 @@ static bool CheckStop(PCICryptoState *dev)
 static int DoAesCbc(PCICryptoState *dev, DmaRequest *dma, bool encrypt)
 {
 	/* TODO */
-	printf("%s, %d\n", __FUNCTION__, __LINE__);
+	if (encrypt)
+		printf("Encrypt>>> %s, %d\n", __FUNCTION__, __LINE__);
+	else
+		printf("Decrypt>>> %s, %d\n", __FUNCTION__, __LINE__);
 
 	return 0;
 }
@@ -511,6 +519,7 @@ static void *worker_thread(void *pdev)
 		while (CryptoDevice_IdleCommand == dev->io->Command
 				&& dev->thread_running)
 		{
+			printf("Thread idling...\n");
 			qemu_cond_wait(&dev->thread_cond, &dev->io_mutex);
 		}
 
@@ -524,6 +533,8 @@ static void *worker_thread(void *pdev)
 		{
 			int error = 0;
 			DmaRequest dma = {};
+
+			printf("Thread working on command 0x%x\n", dev->io->Command);
 			FillDmaRequest(dev, &dma);
 
 			switch (dev->io->Command)
