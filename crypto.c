@@ -7,10 +7,15 @@
 
 #include <openssl/sha.h>
 
+#define NO2STR(n) case n: return #n
+
 #define PCI_CRYPTO_DEV(obj)        OBJECT_CHECK(PCICryptoState, obj, "crypto")
 #define CRYPTO_DEVICE_PAGE_SIZE 4096
 #define CRYPTO_DEVICE_PAGE_MASK 999999
-#define CRYPTO_DEVICE_TO_PHYS ///TODO
+
+/* DMA Buf IN Address = 64bit physical address << 12 */
+#define CRYPTO_DEVICE_TO_PHYS(x) (x >> 12) //FIXME
+
 #define TYPE_PCI_CRYPTO_DEV "pci-crypto"
 
 # ifdef DEBUG
@@ -46,50 +51,72 @@ typedef struct DmaRequest
 	DmaBuf out;
 } DmaRequest;
 
-/* mmio 地址 */
+/*
+ * mmio 地址
+ *
+ * 假设mmio基地址为0xfebf1000
+ * 则Command地址为 0xfebf1000 + 0x02 = 0xfebf10002
+ * 则InterruptFlag地址为 0xfebf1000 + 0x03 = 0xfebf10003
+ *
+ * 可以使用devmem工具来测试,不跟第三个参数表示读
+ *
+ * 从0xfebf1002开始读一个字节
+ * devmem 0xfebf1002 b
+ *
+ * reset
+ * devmem 0xfebf1002 b 1
+ *
+ * Encrypt
+ * devmem 0xfebf1002 b 2
+ *
+ * Decrypt
+ * devmem 0xfebf1002 b 3
+ *
+ * Enable interrupt flag to 2
+ * devmem 0xfebf10003 b 2
+ */
 typedef struct tagCryptoDeviceIo
 {
-	uint8_t ErrorCode;
-	uint8_t State;
-	uint8_t Command;
-	uint8_t InterruptFlag;
-	uint32_t DmaInAddress;
-	uint32_t DmaInPagesCount;
-	uint32_t DmaInSizeInBytes;
-	uint32_t DmaOutAddress;
-	uint32_t DmaOutPagesCount;
-	uint32_t DmaOutSizeInBytes;
-	uint8_t MsiErrorFlag;
-	uint8_t MsiReadyFlag;
-	uint8_t MsiResetFlag;
-	uint8_t Unused;
+	/* 0x00 */ uint8_t ErrorCode;
+	/* 0x01 */ uint8_t State;
+	/* 0x02 */ uint8_t Command;
+	/* 0x03 */ uint8_t InterruptFlag; /* Enanble or Disable */
+	/* 0x04 */ uint32_t DmaInAddress;
+	/* 0x08 */ uint32_t DmaInPagesCount;
+	/* 0x0c */ uint32_t DmaInSizeInBytes;
+	/* 0x10 */ uint32_t DmaOutAddress;
+	/* 0x14 */ uint32_t DmaOutPagesCount;
+	/* 0x18 */ uint32_t DmaOutSizeInBytes;
+	/* 0x1c */ uint8_t MsiErrorFlag;
+	/* 0x1d */ uint8_t MsiReadyFlag;
+	/* 0x1e */ uint8_t MsiResetFlag;
+	/* 0x1f */ uint8_t Unused;
 } CryptoDeviceIo;
 
-enum {
+typedef enum tagIOField {
+	ErrorCode = 0x00,
+	State = 0x01,
+	Command = 0x02,
+	InterruptFlag = 0x03,
+	DmaInAddress = 0x04,
+	DmaInPagesCount = 0x08,
+	DmaInSizeInBytes = 0x0c,
+	DmaOutAddress = 0x10,
+	DmaOutPagesCount = 0x14,
+	DmaOutSizeInBytes = 0x18,
+	MsiErrorFlag = 0x1c,
+	MsiReadyFlag = 0x1d,
+	MsiResetFlag = 0x1e,
+	Unused = 0x1f,
+} IoField;
+
+typedef enum tagCryptoDeviceCommand {
 	CryptoDevice_IdleCommand,
 	CryptoDevice_ResetCommand,
 	CryptoDevice_AesCbcEncryptoCommand,
 	CryptoDevice_AesCbcDecryptoCommand,
 	CryptoDevice_Sha2Command
-};
-
-typedef struct PCICryptoState
-{
-	/* < private >*/
-	PCIDevice parent_obj;
-
-	/* < public > */
-	MemoryRegion memio;
-	CryptoDeviceIo *io;
-	unsigned char memio_data[4096];
-	unsigned char aes_cbc_key[32]; /* 256 bit */
-
-	QemuMutex io_mutex;
-	QemuThread thread;
-	QemuCond thread_cond;
-	bool thread_running;
-
-} PCICryptoState;
+} CryptoDeviceCommand;
 
 typedef enum tagCryptoDeviceMSI
 {
@@ -99,6 +126,74 @@ typedef enum tagCryptoDeviceMSI
 	CryptoDevice_MsiReset = 0x03,
 	CryptoDevice_MsiMax = 0x04,
 } CryptoDeviceMSI;
+
+static const char *iofield2str(IoField io)
+{
+    switch (io)
+	{
+		NO2STR(ErrorCode);
+		NO2STR(State);
+		NO2STR(Command);
+		NO2STR(InterruptFlag);
+		NO2STR(DmaInAddress);
+		NO2STR(DmaInPagesCount);
+		NO2STR(DmaInSizeInBytes);
+		NO2STR(DmaOutAddress);
+		NO2STR(DmaOutPagesCount);
+		NO2STR(DmaOutSizeInBytes);
+		NO2STR(MsiErrorFlag);
+		NO2STR(MsiReadyFlag);
+		NO2STR(MsiResetFlag);
+        default:
+            return "UnknowIoFiled";
+    }
+}
+
+static const char *msi2str(CryptoDeviceMSI msi)
+{
+    switch (msi)
+	{
+		NO2STR(CryptoDevice_MsiZero);
+		NO2STR(CryptoDevice_MsiError);
+		NO2STR(CryptoDevice_MsiReady);
+		NO2STR(CryptoDevice_MsiReset);
+		NO2STR(CryptoDevice_MsiMax);
+        default:
+            return "UnknowMSI";
+    }
+}
+
+static const char *cmd2str(CryptoDeviceCommand cmd)
+{
+    switch (cmd)
+	{
+		NO2STR(CryptoDevice_IdleCommand);
+		NO2STR(CryptoDevice_ResetCommand);
+		NO2STR(CryptoDevice_AesCbcEncryptoCommand);
+		NO2STR(CryptoDevice_AesCbcDecryptoCommand);
+		NO2STR(CryptoDevice_Sha2Command);
+        default:
+            return "UnknowCommand";
+    }
+}
+
+typedef struct PCICryptoState
+{
+	/* < private >*/
+	PCIDevice parent_obj;
+
+	/* < public > */
+	MemoryRegion memio;
+	CryptoDeviceIo *io;
+	unsigned char memio_data[4096]; /* 4KB I/O memory (mmio) */
+	unsigned char aes_cbc_key[32]; /* 256 bit */
+
+	QemuMutex io_mutex;
+	QemuThread thread;
+	QemuCond thread_cond;
+	bool thread_running;
+
+} PCICryptoState;
 
 static void FillDmaRequest(PCICryptoState *dev, DmaRequest *dma)
 {
@@ -111,7 +206,6 @@ static void FillDmaRequest(PCICryptoState *dev, DmaRequest *dma)
 	dma->out.size = dev->io->DmaOutSizeInBytes;
 }
 
-#if 1
 static ssize_t rw_dma_data(PCICryptoState *dev,
 		bool write,
 		DmaBuf *dma,
@@ -172,16 +266,30 @@ static ssize_t rw_dma_data(PCICryptoState *dev,
 
 	return rw_size;
 }
-#endif
 
+/*
+ * There are three types of interrupt
+ * 1. LineBase (INTx)
+ * 2. MSI
+ * 3. MSI-X
+ *
+ * InterruptMode:
+ * In our device, we implement the first two type (with three mode)
+ * 1. Line-based(if system doesn't support MSIs)
+ * 2. One MSI(if the system can't allocate more than one MSI)
+ * 3. Multiple MSIs(if the system can allocate all requested MSIs
+ *		and more than one is requested)
+ */
 static void raise_interrupt(PCICryptoState *dev, CryptoDeviceMSI msi)
 {
 	const uint8_t msi_flag = (1u << msi) >> 1u;
 	ASSERT(msi != CryptoDevice_MsiZero);
 
+	printf("About to raise interrupt %s\n", msi2str(msi));
+
 	if (0 == (dev->io->InterruptFlag & msi_flag))
 	{
-		printf("MSI %u is disabled\n", msi);
+		printf("Interrupt(MSI %u, msi_flag(%u)) is disabled\n", msi, msi_flag);
 		return;
 	}
 
@@ -189,22 +297,29 @@ static void raise_interrupt(PCICryptoState *dev, CryptoDeviceMSI msi)
 
 	if (msi_enabled(&dev->parent_obj))
 	{
+		/* checks the number of allocated MSIs */
 		if (CryptoDevice_MsiMax != msi_nr_vectors_allocated(&dev->parent_obj))
 		{
 			printf("Send MSI 0 (origin msi = %u) allocated msi %u\n",
 					msi,
 					msi_nr_vectors_allocated(&dev->parent_obj));
+
+			/*
+			 * InterruptMode2
+			 * if not all of the requested interrupts were allocated,
+			 * set the interrupt type with MSI#0
+			 */
 			msi = CryptoDevice_MsiZero;
 		}
 		else
 		{
-			printf("Send MSI %u\n", msi);
+			printf("(InterruptMode3) Send MSI %u\n", msi);
 		}
 		msi_notify(&dev->parent_obj, msi);
 	}
 	else
 	{
-		printf("Set legacy interrupt %u\n", msi);
+		printf("MSI not enable, Raise legacy interrupt\n");
 		pci_set_irq(&dev->parent_obj, 1);
 	}
 
@@ -219,9 +334,23 @@ typedef enum {
 	CryptoDevice_InternalError
 } CryptoDeviceErrorCode;
 
+static const char *errno2errstr(CryptoDeviceErrorCode error)
+{
+    switch (error)
+    {
+		NO2STR(CryptoDevice_NoError);
+		NO2STR(CryptoDevice_DmaError);
+		NO2STR(CryptoDevice_DeviceHasBennReseted);
+		NO2STR(CryptoDevice_WriteIoError);
+		NO2STR(CryptoDevice_InternalError);
+        default:
+            return "UnknowError";
+    }
+}
+
 static void raise_error_int(PCICryptoState *dev, CryptoDeviceErrorCode error)
 {
-	printf("generate error %d\n", error);
+	printf("%s>>> Generate %s\n", __FUNCTION__, errno2errstr(error));
 	ASSERT(error <= 0xff);
 
 	dev->io->ErrorCode = (uint8_t)error;
@@ -266,18 +395,18 @@ static uint64_t pci_crypto_memio_read(void *opaque,
 	{
 		case sizeof(uint8_t):
 			res = *(uint8_t *)&dev->memio_data[addr];
-			printf("Read from IO offset 0x%lx size %d, value = 0x%lx\n",
-					addr, size, res);
+			printf("Read I/O memroy [%s] size %d, value = 0x%lx\n",
+					iofield2str(addr), size, res);
 			break;
 		case sizeof(uint16_t):
 			res = *(uint16_t *)&dev->memio_data[addr];
-			printf("Read from IO offset 0x%lx size %d, value = 0x%lx\n",
-					addr, size, res);
+			printf("Read I/O memroy [%s] size %d, value = 0x%lx\n",
+					iofield2str(addr), size, res);
 			break;
 		case sizeof(uint32_t):
 			res = *(uint8_t *)&dev->memio_data[addr];
-			printf("Read from IO offset 0x%lx size %d, value = 0x%lx\n",
-					addr, size, res);
+			printf("Read I/O memroy [%s] size %d, value = 0x%lx\n",
+					iofield2str(addr), size, res);
 			break;
 	}
 
@@ -324,19 +453,16 @@ static void pci_crypto_memio_write(void *opaque,
 	case offsetof(CryptoDeviceIo, $field): \
 		ASSERT(size == sizeof(dev->io->$field));
 
-	printf("Write to ==>IO offset 0x%lx size %d, value = 0x%lx\n", addr, size, val);
+	printf("Write I/O memory[%s] size %d, value = 0x%lx\n", iofield2str(addr), size, val);
 	switch (addr)
 	{
 	CASE(ErrorCode)
-		printf("ErrorCode raise WriteIoError\n");
 		raise_error_int(dev, CryptoDevice_WriteIoError);
 		break;
 	CASE(State)
-		printf("State raise WriteIoError\n");
 		raise_error_int(dev, CryptoDevice_WriteIoError);
 		break;
 	CASE(Command)
-		printf("Command val = 0x%lx\n", val);
 		dev->io->Command = (uint8_t)val;
 		switch (dev->io->Command)
 		{
@@ -344,7 +470,6 @@ static void pci_crypto_memio_write(void *opaque,
 			case CryptoDevice_AesCbcEncryptoCommand:
 			case CryptoDevice_AesCbcDecryptoCommand:
 			case CryptoDevice_Sha2Command:
-				printf("Do command 0x%x\n", dev->io->Command);
 				qemu_cond_signal(&dev->thread_cond);
 				break;
 			default:
@@ -454,9 +579,9 @@ static int DoAesCbc(PCICryptoState *dev, DmaRequest *dma, bool encrypt)
 {
 	/* TODO */
 	if (encrypt)
-		printf("Encrypt>>> %s, %d\n", __FUNCTION__, __LINE__);
+		printf("(%s: %d)>>> Do Encrypt \n", __FUNCTION__, __LINE__);
 	else
-		printf("Decrypt>>> %s, %d\n", __FUNCTION__, __LINE__);
+		printf("(%s: %d)>>> Do Decrypt \n", __FUNCTION__, __LINE__);
 
 	return 0;
 }
@@ -519,7 +644,7 @@ static void *worker_thread(void *pdev)
 		while (CryptoDevice_IdleCommand == dev->io->Command
 				&& dev->thread_running)
 		{
-			printf("Thread idling...\n");
+			printf("Thread idling...Zzz\n");
 			qemu_cond_wait(&dev->thread_cond, &dev->io_mutex);
 		}
 
@@ -534,7 +659,7 @@ static void *worker_thread(void *pdev)
 			int error = 0;
 			DmaRequest dma = {};
 
-			printf("Thread working on command 0x%x\n", dev->io->Command);
+			printf("Thread working on %s\n", cmd2str(dev->io->Command));
 			FillDmaRequest(dev, &dma);
 
 			switch (dev->io->Command)

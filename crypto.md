@@ -56,10 +56,16 @@ Region 0: Memory at febf1000 (32-bit, non-prefetchable) [size=4K]
 ./devmem 0xfebf1000 l
 
 写mmio空间的第二个地址0xfebf1000 + 2,命令是1:对应的是reset
-./devmem 0xfebf1002 w 1
+./devmem 0xfebf1002 b 1
 
 Encrypt:命令是2
-./devmem 0xfebf1002 w 2
+./devmem 0xfebf1002 b 2
 
 Decrypt:命令是3
-./devmem 0xfebf1002 w 3
+./devmem 0xfebf1002 b 3
+
+Enable interrupt
+./devmem 0xfebf1003 b 2
+
+Disable interrupt
+./devmem 0xfebf1003 b 0
