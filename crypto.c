@@ -73,7 +73,7 @@ typedef struct DmaRequest
  * devmem 0xfebf1002 b 3
  *
  * Enable interrupt flag to 2
- * devmem 0xfebf10003 b 2
+ * devmem 0xfebf1003 b 2
  */
 typedef struct tagCryptoDeviceIo
 {
