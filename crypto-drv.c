@@ -96,7 +96,7 @@ static ssize_t mycrypto_debug_store(struct device *dev,
         struct device_attribute *attr, const char *buf, size_t count)
 {
     sscanf(buf, "%d %d %d", &bit, &regIdx, &val);
-	printk("1:write %d bit to 0x%x %d\n", bit, regIdx, val & 0xf);
+	printk("Write %d bit to [0x%x]%s =  %d\n", (bit + 1) * 8, hw_addr + regIdx, iofield2str(regIdx), val & 0xf);
 
 	switch (bit)
 	{
@@ -128,6 +128,33 @@ static struct attribute *mycrypto_attrs[] = {
 static const struct attribute_group mycrypto_attr_group = {
     .attrs = mycrypto_attrs,
 };
+
+
+static irqreturn_t crypto_irq_handler(int irq, void *data)
+{
+	/* read interrupt flag */
+	printk("Interrupt(%d) is %s\n", irq, readb(hw_addr + InterruptFlag) ? "Enable" : "Disable");
+	if (readb(hw_addr + MsiErrorFlag))
+		printk("MsiErrorFlag is set\n");
+	if (readb(hw_addr + MsiReadyFlag))
+		printk("MsiReadyFlag is set\n");
+	if (readb(hw_addr + MsiResetFlag))
+		printk("MsiResetFlag is set\n");
+
+	/* disable irq */
+	disable_irq_nosync(irq);
+
+	/* clear int */
+	writeb(0, hw_addr + InterruptFlag);
+	writeb(0, hw_addr + MsiErrorFlag);
+	writeb(0, hw_addr + MsiReadyFlag);
+	writeb(0, hw_addr + MsiResetFlag);
+
+	/* enable irq */
+	enable_irq(irq);
+
+	return IRQ_HANDLED;
+}
 
 static int e1000_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
@@ -176,6 +203,13 @@ static int e1000_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		return err;
 	}
 
+	printk("irq = %d\n", pdev->irq);
+	err = request_irq(pdev->irq, crypto_irq_handler, IRQF_ONESHOT, "crypto-irq", NULL);
+	//err = request_irq(pdev->irq, crypto_irq_handler, IRQF_PROBE_SHARED, "crypto-irq", NULL);
+	if (err) {
+		printk("Unable to allocate interrupt Error: %d\n", err);
+	}
+
 	/* sysfs for debug */
     err = sysfs_create_group(&pdev->dev.kobj, &mycrypto_attr_group);
     if (err) {
@@ -193,6 +227,8 @@ static void e1000_remove(struct pci_dev *pdev)
 	iounmap(hw_addr);
 
 	sysfs_remove_group(&pdev->dev.kobj, &mycrypto_attr_group);
+
+	free_irq(pdev->irq, NULL);
 }
 
 static void e1000_shutdown(struct pci_dev *pdev)

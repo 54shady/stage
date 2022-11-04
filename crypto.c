@@ -287,6 +287,15 @@ static void raise_interrupt(PCICryptoState *dev, CryptoDeviceMSI msi)
 
 	printf("About to raise interrupt %s\n", msi2str(msi));
 
+	/*
+	 * InterruptFlag 里面包含了MsiErrorFlag, MsiReadyFlag, MsiResetFlag
+	 *
+	 * echo 0 3 2 > /sys/devices/pci0000\:00/0000\:00\:03.0/mycrypto_debug
+	 *
+	 * CryptoDevice_AesCbcEncryptoCommand
+	 * echo 0 2 2 > /sys/devices/pci0000\:00/0000\:00\:03.0/mycrypto_debug
+	 *
+	 */
 	if (0 == (dev->io->InterruptFlag & msi_flag))
 	{
 		printf("Interrupt(MSI %u, msi_flag(%u)) is disabled\n", msi, msi_flag);
@@ -698,6 +707,7 @@ static void *worker_thread(void *pdev)
 					break;
 
 				case CryptoDevice_NoError:
+					printf("%s, %d, No Error, and set readyflag\n", __FUNCTION__, __LINE__);
 					raise_ready_int(dev);
 					break;
 
