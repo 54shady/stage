@@ -87,10 +87,30 @@ static ssize_t mycrypto_debug_show(struct device *dev, struct device_attribute *
 }
 
 /*
- * Enable interrupt flag to 2
+ * Enable interrupt flag to 2 using devmem
  * devmem 0xfebf1003 b 2
  *
+ * for MIS#0 (LineBase INTx or signle MSI mode)
+ * 1: Error INT
+ * Enable Error INT flag
+ * echo 0 3 1 > /sys/devices/pci0000\:00/0000\:00\:03.0/mycrypto_debug
+ *
+ * Trigger write ErrorCode
+ * echo 0 0 0  > /sys/devices/pci0000\:00/0000\:00\:03.0/mycrypto_debug
+ *
+ * 2: Ready INT
+ * Enable Ready INT
  * echo 0 3 2 > /sys/devices/pci0000\:00/0000\:00\:03.0/mycrypto_debug
+ *
+ * Trigger Encrypt
+ * echo 0 2 2 > /sys/devices/pci0000\:00/0000\:00\:03.0/mycrypto_debug
+ *
+ * 3: Reset INT
+ * Enable Reset INT
+ * echo 0 3 3 > /sys/devices/pci0000\:00/0000\:00\:03.0/mycrypto_debug
+ *
+ * Trigger Encrypt
+ * echo 0 2 2 > /sys/devices/pci0000\:00/0000\:00\:03.0/mycrypto_debug
  */
 static ssize_t mycrypto_debug_store(struct device *dev,
         struct device_attribute *attr, const char *buf, size_t count)
@@ -129,17 +149,37 @@ static const struct attribute_group mycrypto_attr_group = {
     .attrs = mycrypto_attrs,
 };
 
+typedef enum tagCryptoDeviceMSI
+{
+	CryptoDevice_MsiZero = 0x00,
+	CryptoDevice_MsiError = 0x01,
+	CryptoDevice_MsiReady = 0x02,
+	CryptoDevice_MsiReset = 0x03,
+	CryptoDevice_MsiMax = 0x04,
+} CryptoDeviceMSI;
 
 static irqreturn_t crypto_irq_handler(int irq, void *data)
 {
+	int ret;
+
+	ret = readb(hw_addr + InterruptFlag);
 	/* read interrupt flag */
-	printk("Interrupt(%d) is %s\n", irq, readb(hw_addr + InterruptFlag) ? "Enable" : "Disable");
-	if (readb(hw_addr + MsiErrorFlag))
-		printk("MsiErrorFlag is set\n");
-	if (readb(hw_addr + MsiReadyFlag))
-		printk("MsiReadyFlag is set\n");
-	if (readb(hw_addr + MsiResetFlag))
-		printk("MsiResetFlag is set\n");
+	printk("Interrupt(%d) is %d -> %s\n", irq, ret, ret ? "Enable" : "Disable");
+	/* INTx */
+	if (ret == CryptoDevice_MsiError)
+		printk("ErrorINT handled\n");
+	if (ret == CryptoDevice_MsiReady)
+		printk("ReadyINT handled\n");
+	if (ret == CryptoDevice_MsiReset)
+		printk("ResetINT handled\n");
+
+	/* MSI#1,2,3 */
+	//if (readb(hw_addr + MsiErrorFlag))
+	//	printk("MsiErrorFlag is set\n");
+	//if (readb(hw_addr + MsiReadyFlag))
+	//	printk("MsiReadyFlag is set\n");
+	//if (readb(hw_addr + MsiResetFlag))
+	//	printk("MsiResetFlag is set\n");
 
 	/* disable irq */
 	disable_irq_nosync(irq);
@@ -190,11 +230,11 @@ static int e1000_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		printk("%s, %d\n", "error", __LINE__);
 		return err;
 	}
-	printk("hw_addr = 0x%08x\n", hw_addr);
-	printk("%08x\n", readb(hw_addr + ErrorCode));
-	printk("%08x\n", readb(hw_addr + State));
-	printk("%08x\n", readb(hw_addr + Command));
-	printk("%08x\n", readb(hw_addr + InterruptFlag));
+	printk("hw_addr = 0x%x\n", hw_addr);
+	printk("ErrorCode = 0x%x\n", readb(hw_addr + ErrorCode));
+	printk("State = 0x%x\n", readb(hw_addr + State));
+	printk("Command = 0x%x\n", readb(hw_addr + Command));
+	printk("InterruptFlag = 0x%x\n", readb(hw_addr + InterruptFlag));
 
 	err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
 	if (err)

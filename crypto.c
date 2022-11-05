@@ -80,7 +80,7 @@ typedef struct tagCryptoDeviceIo
 	/* 0x00 */ uint8_t ErrorCode;
 	/* 0x01 */ uint8_t State;
 	/* 0x02 */ uint8_t Command;
-	/* 0x03 */ uint8_t InterruptFlag; /* Enanble or Disable */
+	/* 0x03 */ uint8_t InterruptFlag; /* 1: Error INT, 2. Ready INT, 3. Reset INT */
 	/* 0x04 */ uint32_t DmaInAddress;
 	/* 0x08 */ uint32_t DmaInPagesCount;
 	/* 0x0c */ uint32_t DmaInSizeInBytes;
@@ -287,18 +287,9 @@ static void raise_interrupt(PCICryptoState *dev, CryptoDeviceMSI msi)
 
 	printf("About to raise interrupt %s\n", msi2str(msi));
 
-	/*
-	 * InterruptFlag 里面包含了MsiErrorFlag, MsiReadyFlag, MsiResetFlag
-	 *
-	 * echo 0 3 2 > /sys/devices/pci0000\:00/0000\:00\:03.0/mycrypto_debug
-	 *
-	 * CryptoDevice_AesCbcEncryptoCommand
-	 * echo 0 2 2 > /sys/devices/pci0000\:00/0000\:00\:03.0/mycrypto_debug
-	 *
-	 */
 	if (0 == (dev->io->InterruptFlag & msi_flag))
 	{
-		printf("Interrupt(MSI %u, msi_flag(%u)) is disabled\n", msi, msi_flag);
+		printf("Interrupt is disabled\n");
 		return;
 	}
 
@@ -428,12 +419,12 @@ static void clear_interrupt(PCICryptoState *dev)
 {
 	if (!msi_enabled(&dev->parent_obj))
 	{
-		printf("Clear legacy interrupt\n");
-
+		printf("MIS not enabled\n");
 		if (0 == dev->io->MsiErrorFlag &&
 			0 == dev->io->MsiReadyFlag &&
 			0 == dev->io->MsiResetFlag)
 		{
+			printf("Clear legacy interrupt\n");
 			pci_set_irq(&dev->parent_obj, 0);
 		}
 	}
@@ -707,7 +698,7 @@ static void *worker_thread(void *pdev)
 					break;
 
 				case CryptoDevice_NoError:
-					printf("%s, %d, No Error, and set readyflag\n", __FUNCTION__, __LINE__);
+					printf("Line:%d, Device No Error ==> set readyflag\n", __LINE__);
 					raise_ready_int(dev);
 					break;
 
