@@ -65,6 +65,8 @@ int regIdx = 0;
 int val = 0;
 int bars;
 void __iomem *hw_addr;
+void *cpu_in_addr, *cpu_out_addr;
+dma_addr_t dma_in_addr, dma_out_addr;
 
 /* cat /sys/devices/pci0000:00/0000:00:03.0/mycrypto_debug */
 static ssize_t mycrypto_debug_show(struct device *dev, struct device_attribute *attr, char *buf)
@@ -236,13 +238,6 @@ static int e1000_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	printk("Command = 0x%x\n", readb(hw_addr + Command));
 	printk("InterruptFlag = 0x%x\n", readb(hw_addr + InterruptFlag));
 
-	err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
-	if (err)
-	{
-		printk("%s, %d\n", "error", __LINE__);
-		return err;
-	}
-
 	printk("irq = %d\n", pdev->irq);
 	err = request_irq(pdev->irq, crypto_irq_handler, IRQF_ONESHOT, "crypto-irq", NULL);
 	//err = request_irq(pdev->irq, crypto_irq_handler, IRQF_PROBE_SHARED, "crypto-irq", NULL);
@@ -257,6 +252,36 @@ static int e1000_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
         return -1;
     }
 
+	err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
+	if (err)
+	{
+		printk("%s, %d\n", "error", __LINE__);
+		return err;
+	}
+
+	/* driver using cpu_in_addr, pass the dma_in_addr/dma_out_addr to device */
+	cpu_in_addr = dma_alloc_coherent(&pdev->dev, 4096, &dma_in_addr, GFP_KERNEL);
+	if (!cpu_in_addr)
+	{
+		printk("Failed allocation memory for DMA\n");
+		return -ENOMEM;
+	}
+	printk("DmaInAddress = 0x%x\n", dma_in_addr);
+	writel(dma_in_addr, hw_addr + DmaInAddress);
+	writel(4096, hw_addr + DmaInSizeInBytes);
+	writel(1, hw_addr + DmaInPagesCount);
+
+	cpu_out_addr = dma_alloc_coherent(&pdev->dev, 4096, &dma_out_addr, GFP_KERNEL);
+	if (!cpu_out_addr)
+	{
+		printk("Failed allocation memory for DMA\n");
+		return -ENOMEM;
+	}
+	printk("DmaOutAddress = 0x%x\n", dma_out_addr);
+	writel(dma_out_addr, hw_addr + DmaOutAddress);
+	writel(4096, hw_addr + DmaOutSizeInBytes);
+	writel(1, hw_addr + DmaOutPagesCount);
+
 	return 0;
 }
 
@@ -269,6 +294,9 @@ static void e1000_remove(struct pci_dev *pdev)
 	sysfs_remove_group(&pdev->dev.kobj, &mycrypto_attr_group);
 
 	free_irq(pdev->irq, NULL);
+
+	dma_free_coherent(&pdev->dev, 4096, cpu_in_addr, dma_in_addr);
+	dma_free_coherent(&pdev->dev, 4096, cpu_out_addr, dma_out_addr);
 }
 
 static void e1000_shutdown(struct pci_dev *pdev)
