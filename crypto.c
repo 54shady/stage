@@ -404,7 +404,7 @@ static uint64_t pci_crypto_memio_read(void *opaque,
 					iofield2str(addr), size, res);
 			break;
 		case sizeof(uint32_t):
-			res = *(uint8_t *)&dev->memio_data[addr];
+			res = *(uint32_t *)&dev->memio_data[addr];
 			printf("Read I/O memroy [%s] size %d, value = 0x%lx\n",
 					iofield2str(addr), size, res);
 			break;

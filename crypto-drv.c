@@ -118,7 +118,7 @@ static ssize_t mycrypto_debug_store(struct device *dev,
         struct device_attribute *attr, const char *buf, size_t count)
 {
     sscanf(buf, "%d %d %d", &bit, &regIdx, &val);
-	printk("Write %d bit to [0x%x]%s =  %d\n", (bit + 1) * 8, hw_addr + regIdx, iofield2str(regIdx), val & 0xf);
+	printk("Write [0x%x]%s =  %d\n",  hw_addr + regIdx, iofield2str(regIdx), val);
 
 	switch (bit)
 	{
