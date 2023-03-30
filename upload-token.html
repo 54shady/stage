@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>http-server-upload</title>
+	</head>
+	<body>
+		<form action="upload" method="post" enctype="multipart/form-data" onsubmit="let totalSize=0, files=document.getElementById('fileinput').files; for (let file of files){totalSize+=file.size} if(files.length){return (totalSize<209715200)?true:(alert(`Cannot upload. Input files ${(totalSize/1024/1024).toFixed(2)} MB exceed 200 MB limit.`),false) }else{alert('No file selected.');return false}">
+			Files: <input id="fileinput" type="file" name="uploads" multiple="multiple"><br />
+			Upload path: <input type="text" name="path" value=""><br />
+			Token: <input type="text" name="token" value=""><br />
+			<input type="submit" value="Upload!">
+		</form>
+	</body>
+</html>
