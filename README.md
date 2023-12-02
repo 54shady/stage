@@ -81,3 +81,5 @@ bpfProg中在guest内核的sched_setaffinity处
 Guest ubunt 22.04
 
 	apt install -y openssh-server make gcc
+
+	ssh -o "UserKnownHostsFile=/dev/null" -o "StrictHostKeyChecking=no" root@serverip -p port
